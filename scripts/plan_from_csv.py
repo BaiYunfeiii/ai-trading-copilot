@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import json
 from dotenv import load_dotenv
 from typing import List
 
@@ -66,13 +67,15 @@ def main() -> None:
 
     # 配置
     symbols: List[str] = ["XAUUSDm"]
-    timeframes: List[str] = ["H1", "M5"]
+    timeframes: List[str] = ["M5"]
     rows = 300
 
     project_root = Path(__file__).resolve().parent.parent
     output_dir = project_root / "output"
     plans_dir = output_dir / "plans"
+    conv_dir = output_dir / "conversations"
     plans_dir.mkdir(parents=True, exist_ok=True)
+    conv_dir.mkdir(parents=True, exist_ok=True)
 
     # 从环境变量读取 OpenAI 兼容接口配置，避免硬编码敏感信息
     logger.info("读取环境变量: %s", os.getenv("OPENAI_BASE_URL"))
@@ -111,10 +114,14 @@ def main() -> None:
 
         prompt = make_prompt_merged(symbol, tf_to_df)
         logger.info("构建提示完成 | symbol=%s | 提示字符数=%d", symbol, len(prompt))
-        content = client.chat([
+        messages = [
             {"role": "system", "content": "你是专业的量化交易顾问，严格按照Al Brooks价格行为学的逻辑进行交易。"},
             {"role": "user", "content": prompt},
-        ])
+        ]
+        content = client.chat(messages)
+        # 将助手回复加入对话
+        if isinstance(content, str):
+            messages.append({"role": "assistant", "content": content})
         logger.info("收到模型响应 | symbol=%s | 响应字符数=%d", symbol, len(content) if isinstance(content, str) else -1)
         print("=" * 80)
         print(f"Unified Plan for {symbol} (timeframes: {', '.join(timeframes)}):")
@@ -134,6 +141,18 @@ def main() -> None:
         body = content if isinstance(content, str) else ""
         md_path.write_text(header + body, encoding="utf-8")
         logger.info("已保存计划: %s", md_path)
+
+        # 保存对话 JSON，便于复用上下文
+        conv_payload = {
+            "symbol": symbol,
+            "timeframes": timeframes,
+            "rows": rows,
+            "generated_at": ts,
+            "messages": messages,
+        }
+        conv_path = conv_dir / f"conv_{symbol}_{ts}.json"
+        conv_path.write_text(json.dumps(conv_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.info("已保存对话: %s", conv_path)
 
 
 if __name__ == "__main__":
