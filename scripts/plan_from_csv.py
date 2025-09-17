@@ -58,7 +58,8 @@ def main() -> None:
     # 加载 .env（若存在），便于本地开发与部署环境变量管理
     env_path = Path(__file__).resolve().parent.parent / ".env"
     if env_path.exists():
-        load_dotenv(dotenv_path=env_path)
+        # 使用 override=True 以覆盖系统中已存在但为空/旧值的环境变量
+        load_dotenv(dotenv_path=env_path, override=True)
         logging.info("已加载环境变量文件: %s", env_path)
     else:
         logging.info("未检测到 .env 文件，使用系统环境变量")
@@ -74,6 +75,9 @@ def main() -> None:
     plans_dir.mkdir(parents=True, exist_ok=True)
 
     # 从环境变量读取 OpenAI 兼容接口配置，避免硬编码敏感信息
+    logger.info("读取环境变量: %s", os.getenv("OPENAI_BASE_URL"))
+    logger.info("读取环境变量: %s", os.getenv("OPENAI_API_KEY"))
+    logger.info("读取环境变量: %s", os.getenv("OPENAI_MODEL"))
     client = OpenAIClient(OpenAIConfig(
         base_url=os.getenv("OPENAI_BASE_URL"),
         api_key=os.getenv("OPENAI_API_KEY"),
