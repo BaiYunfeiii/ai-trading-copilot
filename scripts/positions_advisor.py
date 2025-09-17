@@ -46,11 +46,8 @@ def build_messages(original_messages: List[Dict[str, str]], positions_md: str) -
     appended.append({
         "role": "user",
         "content": (
-            "以下是当前账户的持仓（来自MT5）：\n\n" + positions_md +
-            "\n\n请结合先前的分析与计划，给出仓位管理与风险控制建议：\n"
-            "- 是否应加减仓、在何处；\n"
-            "- 止损/止盈的优化与移动；\n"
-            "- 若无持仓，应说明是否建议建立新仓，以及触发条件。\n"
+            "以下是当前账户的持仓：\n\n" + positions_md +
+            "\n\n请结合先前的分析与计划，给出仓位管理与风险控制建议\n"
         )
     })
     return appended
