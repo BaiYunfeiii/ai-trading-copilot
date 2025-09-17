@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import json
+import argparse
 from dotenv import load_dotenv
 from typing import List
 
@@ -26,6 +27,37 @@ def _summarize_df(df: pd.DataFrame) -> str:
     return csv_text
 
 
+def parse_symbol_args(symbol_arg: str) -> tuple[str, str, int]:
+    """
+    解析 --symbol 参数，支持以下格式：
+    - SYMBOL
+    - SYMBOL,TIMEFRAME
+    - SYMBOL,TIMEFRAME,ROWS
+
+    示例：
+    - XAUUSDm
+    - XAUUSDm,M5
+    - XAUUSDm,M5,300
+    """
+    parts = [p.strip() for p in symbol_arg.split(',') if p.strip()]
+    if len(parts) == 0 or len(parts) > 3:
+        raise ValueError(
+            f"参数格式错误: {symbol_arg}，应为 SYMBOL 或 SYMBOL,TIMEFRAME 或 SYMBOL,TIMEFRAME,ROWS"
+        )
+
+    symbol = parts[0]
+    timeframe = "M5" if len(parts) < 2 else parts[1]
+    if len(parts) < 3:
+        rows = 300
+    else:
+        try:
+            rows = int(parts[2])
+        except ValueError:
+            raise ValueError(f"行数必须是整数: {parts[2]}")
+
+    return symbol, timeframe, rows
+
+
 def make_prompt_merged(symbol: str, tf_to_df: dict[str, pd.DataFrame]) -> str:
     sections = []
     for tf, df in tf_to_df.items():
@@ -33,7 +65,7 @@ def make_prompt_merged(symbol: str, tf_to_df: dict[str, pd.DataFrame]) -> str:
     joined = "\n\n".join(sections)
     return (
     f"""
-我是一名“Albrooks 价格行为学”的交易者，先读取Context，再根据M5寻找交易计划。  
+我是一名"Albrooks 价格行为学"的交易者，先读取Context，再根据M5寻找交易计划。  
 以下是 {symbol} M5的k线数据。  
 - 请分析当前的Context
 - 制定采取的交易计划，具体可执行
@@ -49,6 +81,18 @@ def make_prompt_merged(symbol: str, tf_to_df: dict[str, pd.DataFrame]) -> str:
 
 
 def main() -> None:
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="从CSV数据生成交易计划")
+    parser.add_argument(
+        "--symbol", 
+        type=str, 
+        help=(
+            "交易对参数，格式: SYMBOL[,TIMEFRAME[,ROWS]] "
+            "例如: XAUUSDm 或 XAUUSDm,M5 或 XAUUSDm,M5,300"
+        )
+    )
+    args = parser.parse_args()
+
     # 日志配置
     logging.basicConfig(
         level=logging.INFO,
@@ -65,10 +109,20 @@ def main() -> None:
     else:
         logging.info("未检测到 .env 文件，使用系统环境变量")
 
-    # 配置
-    symbols: List[str] = ["BTCUSDm"]
-    timeframes: List[str] = ["M5"]
-    rows = 300
+    # 配置 - 从命令行参数或默认值获取
+    if args.symbol:
+        try:
+            symbol, timeframe, rows = parse_symbol_args(args.symbol)
+            symbols: List[str] = [symbol]
+            timeframes: List[str] = [timeframe]
+        except ValueError as e:
+            logger.error("参数解析错误: %s", e)
+            return
+    else:
+        # 默认配置
+        symbols: List[str] = ["BTCUSDm"]
+        timeframes: List[str] = ["M5"]
+        rows = 300
 
     project_root = Path(__file__).resolve().parent.parent
     output_dir = project_root / "output"
