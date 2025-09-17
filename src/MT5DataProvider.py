@@ -179,6 +179,49 @@ class MT5DataProvider:
 
         return df
 
+    def get_positions(self, symbol: Optional[str] = None) -> pd.DataFrame:
+        """
+        读取当前账户持仓信息。
+
+        参数：
+        - symbol: 可选，若提供，则仅返回该品种的持仓。
+
+        返回：pandas DataFrame，包含关键字段：
+        ticket, symbol, type, volume, price_open, price_current, sl, tp, swap, profit,
+        time, time_update, comment, magic, identifier, reason。
+        时间字段将转换为上海时区（若存在）。
+        """
+        self.initialize()
+        kwargs: Dict[str, object] = {}
+        if symbol:
+            kwargs["symbol"] = symbol
+        positions = mt5.positions_get(**kwargs) if kwargs else mt5.positions_get()
+        if positions is None:
+            last_error = mt5.last_error()
+            raise RuntimeError(f"读取持仓失败。last_error={last_error}")
+        if len(positions) == 0:
+            return pd.DataFrame(columns=[
+                "ticket", "symbol", "type", "volume", "price_open", "price_current",
+                "sl", "tp", "swap", "profit", "time", "time_update", "comment",
+                "magic", "identifier", "reason"
+            ])
+
+        df = pd.DataFrame(list(positions), dtype=object)
+        # 正规化常见列名（MT5的字段名通常如下）
+        wanted_cols = [
+            "ticket", "symbol", "type", "volume", "price_open", "price_current",
+            "sl", "tp", "swap", "profit", "time", "time_update", "comment",
+            "magic", "identifier", "reason"
+        ]
+        # 仅保留存在的列
+        keep = [c for c in wanted_cols if c in df.columns]
+        df = df[keep]
+        # 时间字段转换
+        for time_col in ("time", "time_update"):
+            if time_col in df.columns:
+                df[time_col] = pd.to_datetime(df[time_col], unit="s", utc=True, errors="coerce").dt.tz_convert(TZ_SH)
+        return df.reset_index(drop=True)
+
 
 # 便捷函数式接口
 _default_provider: Optional[MT5DataProvider] = None
@@ -203,5 +246,18 @@ def get_rates(
             start_time=start_time,
             end_time=end_time,
         )
+
+
+def get_positions(
+    symbol: Optional[str] = None,
+    *,
+    terminal_path: Optional[str] = None,
+) -> pd.DataFrame:
+    """便捷方法：读取当前账户持仓。可按symbol过滤。"""
+    global _default_provider
+    if _default_provider is None:
+        _default_provider = MT5DataProvider(MT5Config(terminal_path=terminal_path))
+    with _default_provider:
+        return _default_provider.get_positions(symbol=symbol)
 
 
