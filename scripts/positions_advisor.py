@@ -105,6 +105,42 @@ def derive_symbol_from_conversation_path(conv_path: Path) -> Optional[str]:
     return symbol or None
 
 
+def find_latest_conversation_for_symbol(base_output_dir: Path, symbol: str) -> Optional[Path]:
+    """
+    在 output/conversations 下查找指定 symbol 的最新会话文件：
+    - 文件命名：conv_{SYMBOL}_{YYYYMMDD_HHMMSS}.json
+    - 匹配大小写不敏感的 SYMBOL
+    - 以文件名中的时间戳排序；若解析失败，则以文件修改时间回退
+    """
+    conv_dir = base_output_dir / "conversations"
+    if not conv_dir.exists() or not conv_dir.is_dir():
+        return None
+
+    symbol_lower = symbol.lower()
+    candidates: List[Path] = []
+    for p in conv_dir.glob("conv_*.json"):
+        sym = derive_symbol_from_conversation_path(p)
+        if sym and sym.lower() == symbol_lower:
+            candidates.append(p)
+
+    if not candidates:
+        return None
+
+    def sort_key(p: Path):
+        name = p.name
+        try:
+            stem = name[len("conv_"):-len(".json")]  # SYMBOL_YYYYMMDD_HHMMSS
+            parts = stem.rsplit("_", 2)
+            ts = parts[-2] + "_" + parts[-1]
+            dt = datetime.strptime(ts, "%Y%m%d_%H%M%S")
+            return dt
+        except Exception:
+            return datetime.fromtimestamp(p.stat().st_mtime)
+
+    candidates.sort(key=sort_key, reverse=True)
+    return candidates[0]
+
+
 def main() -> None:
     # 日志配置
     logging.basicConfig(
@@ -128,7 +164,7 @@ def main() -> None:
     parser.add_argument("--symbol", type=str, default=None, help="可选：仅提取该品种持仓；若缺省将尝试自动推导")
     parser.add_argument("--terminal", type=str, default=None, help="可选：MT5终端路径；缺省读取环境变量 MT5_TERMINAL")
     parser.add_argument("--output", type=str, default=None, help="可选：保存包含建议与持仓的JSON到该路径（不含会话）")
-    parser.add_argument("--md_output", type=str, default=True, help="可选：将建议与持仓另存为Markdown文件（不含会话）")
+    parser.add_argument("--md_output", type=str, default=None, help="可选：将建议与持仓另存为Markdown文件（不含会话）；缺省保存到 output/advices/")
     args = parser.parse_args()
 
     conv_path: Optional[Path] = None
@@ -139,7 +175,17 @@ def main() -> None:
         conv_path = derive_conversation_from_plan(Path(args.plan))
         logger.info("会话来源：由计划文件推导，plan=%s -> conv=%s", args.plan, conv_path)
     else:
-        raise SystemExit("请提供会话文件路径或 --plan 计划文件路径。")
+        # 支持仅提供 --symbol 时自动匹配最新会话
+        if args.symbol:
+            base_output = project_root / "output"
+            conv_path = find_latest_conversation_for_symbol(base_output, args.symbol)
+            if conv_path is None:
+                raise SystemExit(
+                    f"未在 {base_output / 'conversations'} 找到匹配 symbol='{args.symbol}' 的会话文件。"
+                )
+            logger.info("会话来源：根据 symbol 自动匹配最新会话，symbol=%s -> %s", args.symbol, conv_path)
+        else:
+            raise SystemExit("请提供会话文件路径或 --plan 计划文件路径，或提供 --symbol 以自动匹配最新会话。")
 
     if not conv_path.exists():
         raise FileNotFoundError(f"会话文件不存在: {conv_path}")
@@ -149,8 +195,7 @@ def main() -> None:
 
     # 决定 symbol：优先 --symbol，其次会话JSON中的 symbol，再其次从文件名推导
     original_symbol: Optional[str] = args.symbol or conv.get("symbol") or derive_symbol_from_conversation_path(conv_path)
-    symbol_for_log: Optional[str] = original_symbol.lower() if original_symbol else None
-    logger.info("解析到 symbol=%s（用于日志/文件名小写展示；查询MT5仍使用原值）", symbol_for_log or "<未指定>")
+    logger.info("解析到 symbol=%s（用于日志/文件名小写展示；查询MT5仍使用原值）", original_symbol or "<未指定>")
 
     # 终端路径来源：参数 > 环境变量 MT5_TERMINAL
     terminal_path: Optional[str] = args.terminal or os.getenv("MT5_TERMINAL")
@@ -169,7 +214,6 @@ def main() -> None:
         raise SystemExit(hint)
 
     positions_count = 0 if positions_df is None else len(positions_df.index)
-    logger.info("已读取持仓 %d 条%s", positions_count, f"（过滤 symbol={original_symbol}）" if original_symbol else "")
     positions_md = positions_to_markdown(positions_df)
 
     # 组装消息并调用OpenAI
@@ -210,31 +254,35 @@ def main() -> None:
         logger.info("已保存JSON至：%s", out_path)
         print(f"已保存建议至: {out_path}")
 
-    # 可选保存为 Markdown（不包含会话全文）
+    # 保存为 Markdown（不包含会话全文），默认放在 output/advices 下
+    advices_dir = project_root / "output" / "advices"
+    ts_fs = datetime.now().strftime("%Y%m%d_%H%M%S")
     if args.md_output:
         md_path = Path(args.md_output)
-        md_path.parent.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        # 组装 Markdown 内容
-        lines = []
-        lines.append(f"# 仓位管理建议 ({effective_symbol or 'n/a'})")
-        lines.append("")
-        lines.append(f"- 生成时间: {ts}")
-        if effective_symbol:
-            lines.append(f"- 品种: `{effective_symbol}`")
-        lines.append("")
-        lines.append("## 当前持仓")
-        lines.append("")
-        lines.append(positions_md)
-        lines.append("")
-        lines.append("## 建议")
-        lines.append("")
-        lines.append(advice if isinstance(advice, str) else str(advice))
-        content = "\n".join(lines)
-        with md_path.open("w", encoding="utf-8") as f:
-            f.write(content)
-        logger.info("已保存Markdown至：%s", md_path)
-        print(f"已保存Markdown至: {md_path}")
+    else:
+        default_name = f"advice_{(original_symbol or 'n/a')}_{ts_fs}.md"
+        md_path = advices_dir / default_name
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # 组装 Markdown 内容
+    lines = []
+    lines.append(f"# 仓位管理建议 ({original_symbol or 'n/a'})")
+    lines.append("")
+    lines.append(f"- 生成时间: {ts}")
+    if original_symbol:
+        lines.append(f"- 品种: `{original_symbol}`")
+    lines.append("")
+    lines.append("## 当前持仓")
+    lines.append("")
+    lines.append(positions_md)
+    lines.append("")
+    lines.append("## 建议")
+    lines.append("")
+    lines.append(advice if isinstance(advice, str) else str(advice))
+    content = "\n".join(lines)
+    with md_path.open("w", encoding="utf-8") as f:
+        f.write(content)
+    logger.info("已保存Markdown至：%s", md_path)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from datetime import datetime
 from typing import Optional, Union, Dict
 
@@ -85,6 +86,7 @@ class MT5DataProvider:
     def __init__(self, config: Optional[MT5Config] = None) -> None:
         self.config = config or MT5Config()
         self._initialized = False
+        self._logger = logging.getLogger(__name__)
 
     def initialize(self) -> None:
         if self._initialized:
@@ -191,36 +193,68 @@ class MT5DataProvider:
         time, time_update, comment, magic, identifier, reason。
         时间字段将转换为上海时区（若存在）。
         """
+        self._logger.info("开始读取持仓：symbol=%s", symbol or "<ALL>")
         self.initialize()
         kwargs: Dict[str, object] = {}
         if symbol:
             kwargs["symbol"] = symbol
         positions = mt5.positions_get(**kwargs) if kwargs else mt5.positions_get()
+        self._logger.info("MT5 返回 positions：%s 条", 0 if positions is None else len(positions))
         if positions is None:
             last_error = mt5.last_error()
+            self._logger.error("MT5 positions_get 返回 None，错误代码: %s", last_error)
             raise RuntimeError(f"读取持仓失败。last_error={last_error}")
         if len(positions) == 0:
+            self._logger.info("当前无持仓。")
+            # 添加诊断信息
+            account_info = mt5.account_info()
+            if account_info:
+                self._logger.info("账户信息 - 登录: %s, 服务器: %s, 余额: %s", 
+                                account_info.login, account_info.server, account_info.balance)
+            else:
+                self._logger.warning("无法获取账户信息")
             return pd.DataFrame(columns=[
                 "ticket", "symbol", "type", "volume", "price_open", "price_current",
                 "sl", "tp", "swap", "profit", "time", "time_update", "comment",
                 "magic", "identifier", "reason"
             ])
 
-        df = pd.DataFrame(list(positions), dtype=object)
-        # 正规化常见列名（MT5的字段名通常如下）
-        wanted_cols = [
-            "ticket", "symbol", "type", "volume", "price_open", "price_current",
-            "sl", "tp", "swap", "profit", "time", "time_update", "comment",
-            "magic", "identifier", "reason"
-        ]
-        # 仅保留存在的列
-        keep = [c for c in wanted_cols if c in df.columns]
-        df = df[keep]
+        # 将TradePosition对象转换为字典列表
+        positions_data = []
+        for pos in positions:
+            pos_dict = {
+                "ticket": pos.ticket,
+                "symbol": pos.symbol,
+                "type": pos.type,
+                "volume": pos.volume,
+                "price_open": pos.price_open,
+                "price_current": pos.price_current,
+                "sl": pos.sl,
+                "tp": pos.tp,
+                "swap": pos.swap,
+                "profit": pos.profit,
+                "time": pos.time,
+                "time_update": pos.time_update,
+                "comment": pos.comment,
+                "magic": pos.magic,
+                "identifier": pos.identifier,
+                "reason": pos.reason
+            }
+            positions_data.append(pos_dict)
+        
+        df = pd.DataFrame(positions_data, dtype=object)
+        self._logger.info("持仓DataFrame 维度：rows=%d, cols=%d; 列：%s", df.shape[0], df.shape[1], ", ".join(df.columns))
         # 时间字段转换
         for time_col in ("time", "time_update"):
             if time_col in df.columns:
                 df[time_col] = pd.to_datetime(df[time_col], unit="s", utc=True, errors="coerce").dt.tz_convert(TZ_SH)
-        return df.reset_index(drop=True)
+        df = df.reset_index(drop=True)
+        try:
+            preview = df.head().to_string(index=False)
+        except Exception:
+            preview = str(df.head())
+        self._logger.info("持仓DataFrame 前5行预览：\n%s", preview)
+        return df
 
 
 # 便捷函数式接口
