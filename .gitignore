@@ -1,3 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+.idea/
+.vscode/
+output/plans/*.md
 # Python
 __pycache__/
 *.py[cod]
