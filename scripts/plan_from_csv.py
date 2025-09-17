@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+from dotenv import load_dotenv
 from typing import List
 
 import pandas as pd
@@ -30,11 +31,19 @@ def make_prompt_merged(symbol: str, tf_to_df: dict[str, pd.DataFrame]) -> str:
         sections.append(f"[周期 {tf}]\n" + _summarize_df(df))
     joined = "\n\n".join(sections)
     return (
-        f"请基于以下 {symbol} 的多周期数据，制定交易计划。\n"
-        f"要求：\n"
-        f"- 分析当前的Context，如：市场周期、当前位置与关键价位等。\n"
-        f"- 给出可以采用的多个交易计划，给出优先级。\n"
-        f"多周期数据如下：\n{joined}"
+    f"""
+我是一名“Albrooks 价格行为学”的交易者，偏好按照H1读取Context，M5交易。  
+以下是 {symbol} H1和M5的k线数据。  
+- 请分析当前的Context和可以采取的交易计划.
+- 请给出行动清单
+
+注：
+1. 最新的K线仍在进行中，包括这次和后续的数据
+2. 如有多个交易计划，请给出优先级。
+
+数据如下：
+{joined}
+    """
     )
 
 
@@ -45,6 +54,14 @@ def main() -> None:
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
     logger = logging.getLogger("plan_from_csv")
+
+    # 加载 .env（若存在），便于本地开发与部署环境变量管理
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if env_path.exists():
+        load_dotenv(dotenv_path=env_path)
+        logging.info("已加载环境变量文件: %s", env_path)
+    else:
+        logging.info("未检测到 .env 文件，使用系统环境变量")
 
     # 配置
     symbols: List[str] = ["XAUUSDm"]
@@ -91,7 +108,7 @@ def main() -> None:
         prompt = make_prompt_merged(symbol, tf_to_df)
         logger.info("构建提示完成 | symbol=%s | 提示字符数=%d", symbol, len(prompt))
         content = client.chat([
-            {"role": "system", "content": "你是专业的量化交易顾问，严格按照Al Brooks价格行为学交易。"},
+            {"role": "system", "content": "你是专业的量化交易顾问，严格按照Al Brooks价格行为学的逻辑进行交易。"},
             {"role": "user", "content": prompt},
         ])
         logger.info("收到模型响应 | symbol=%s | 响应字符数=%d", symbol, len(content) if isinstance(content, str) else -1)
