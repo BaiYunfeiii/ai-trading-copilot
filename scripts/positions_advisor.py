@@ -126,7 +126,7 @@ def main() -> None:
     parser.add_argument("--conversation", type=str, nargs="?", default=None, help="会话JSON路径，如 output/conversations/conv_xxx.json")
     parser.add_argument("--plan", type=str, default=None, help="可选：从计划文件名推导会话文件，如 output/plans/plan_xxx.md")
     parser.add_argument("--symbol", type=str, default=None, help="可选：仅提取该品种持仓；若缺省将尝试自动推导")
-    parser.add_argument("--terminal", type=str, default=None, help="可选：MT5终端路径")
+    parser.add_argument("--terminal", type=str, default=None, help="可选：MT5终端路径；缺省读取环境变量 MT5_TERMINAL")
     parser.add_argument("--output", type=str, default=None, help="可选：保存包含建议与持仓的JSON到该路径（不含会话）")
     parser.add_argument("--md_output", type=str, default=True, help="可选：将建议与持仓另存为Markdown文件（不含会话）")
     args = parser.parse_args()
@@ -148,17 +148,28 @@ def main() -> None:
     messages: List[Dict[str, str]] = conv.get("messages", [])  # type: ignore[assignment]
 
     # 决定 symbol：优先 --symbol，其次会话JSON中的 symbol，再其次从文件名推导
-    effective_symbol: Optional[str] = args.symbol or conv.get("symbol") or derive_symbol_from_conversation_path(conv_path)
-    if effective_symbol:
-        effective_symbol = effective_symbol.lower()
-    logger.info("解析到 symbol=%s (统一为小写)", effective_symbol or "<未指定>")
+    original_symbol: Optional[str] = args.symbol or conv.get("symbol") or derive_symbol_from_conversation_path(conv_path)
+    symbol_for_log: Optional[str] = original_symbol.lower() if original_symbol else None
+    logger.info("解析到 symbol=%s（用于日志/文件名小写展示；查询MT5仍使用原值）", symbol_for_log or "<未指定>")
 
-    # 读取持仓
-    if args.terminal:
-        logger.info("使用指定 MT5 终端路径：%s", args.terminal)
-    positions_df = get_positions(symbol=effective_symbol, terminal_path=args.terminal)
+    # 终端路径来源：参数 > 环境变量 MT5_TERMINAL
+    terminal_path: Optional[str] = args.terminal or os.getenv("MT5_TERMINAL")
+    if terminal_path:
+        logger.info("MT5 终端路径：%s", terminal_path)
+
+    # 读取持仓（对MT5查询使用原始大小写的 symbol）
+    try:
+        positions_df = get_positions(symbol=original_symbol, terminal_path=terminal_path)
+    except RuntimeError as exc:
+        logger.error("读取持仓失败：%s", exc)
+        hint = (
+            "请确认本机已安装并登录 MT5，且提供了正确的终端路径 --terminal 或设置环境变量 MT5_TERMINAL。\n"
+            "示例：--terminal \"C:\\Program Files\\MetaTrader 5\\terminal64.exe\""
+        )
+        raise SystemExit(hint)
+
     positions_count = 0 if positions_df is None else len(positions_df.index)
-    logger.info("已读取持仓 %d 条%s", positions_count, f"（过滤 symbol={effective_symbol}）" if effective_symbol else "")
+    logger.info("已读取持仓 %d 条%s", positions_count, f"（过滤 symbol={original_symbol}）" if original_symbol else "")
     positions_md = positions_to_markdown(positions_df)
 
     # 组装消息并调用OpenAI
@@ -188,7 +199,7 @@ def main() -> None:
     if args.output:
         out_path = Path(args.output)
         out_payload = {
-            "symbol": effective_symbol,
+            "symbol": original_symbol,
             "generated_at": datetime.now().strftime("%Y%m%d_%H%M%S"),
             "positions": positions_df.to_dict(orient="records"),
             "advice": advice,
