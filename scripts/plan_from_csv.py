@@ -32,10 +32,10 @@ def make_prompt_merged(symbol: str, tf_to_df: dict[str, pd.DataFrame]) -> str:
     joined = "\n\n".join(sections)
     return (
     f"""
-我是一名“Albrooks 价格行为学”的交易者，偏好按照H1读取Context，M5交易。  
-以下是 {symbol} H1和M5的k线数据。  
-- 请分析当前的Context和可以采取的交易计划.
-- 请给出行动清单
+我是一名“Albrooks 价格行为学”的交易者，先读取Context，再根据M5寻找交易计划。  
+以下是 {symbol} M5的k线数据。  
+- 请分析当前的Context
+- 制定采取的交易计划，具体可执行
 
 注：
 1. 最新的K线仍在进行中，包括这次和后续的数据
@@ -67,7 +67,7 @@ def main() -> None:
     # 配置
     symbols: List[str] = ["XAUUSDm"]
     timeframes: List[str] = ["H1", "M5"]
-    rows = 100
+    rows = 300
 
     project_root = Path(__file__).resolve().parent.parent
     output_dir = project_root / "output"
