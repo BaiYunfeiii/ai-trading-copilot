@@ -1,3 +1,4 @@
 MetaTrader5>=5.0
 pandas>=2.0
 pytz>=2023.3
+openai>=1.0.0
