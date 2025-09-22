@@ -9,8 +9,72 @@ from typing import List
 
 import pandas as pd
 import logging
+from datetime import datetime
 
 from src import OpenAIClient, OpenAIConfig
+
+SYSTEM_PROMPT = """
+你是一位精通Al Brooks价格行为学体系的专业交易分析师。你的任务是分析所提供时间框架的K线数据，首先识别当前市场周期，然后基于该周期特征制定相应的交易计划。
+
+核心分析框架：
+
+一、市场周期识别（按Al Brooks体系）
+1. Strong Breakout（强突破）
+   - 连续的趋势棒，很少回调
+   - 突破后快速远离突破点
+   
+2. Breakout（突破）
+   - 突破重要支撑/阻力
+   - 需要评估突破的强度和后续跟进
+
+3. Always In Long/Short（始终做多/做空）
+   - 明确的单边趋势
+   - 回调浅且被快速买入/卖出
+   
+4. Broad Channel（宽通道）
+   - 趋势存在但有较深回调
+   - 通道线清晰可见
+   
+5. Tight Channel（窄通道）
+   - 缓慢稳定的趋势
+   - 小幅波动，很少超出通道线
+   
+6. Trading Range（交易区间）
+   - 明确的支撑和阻力
+   - 价格在区间内震荡
+   
+7. Breakout Mode（突破模式）
+   - 区间收窄，即将选择方向
+   - 需要等待确认
+
+二、价格行为模式识别
+- Major Reversal（主要反转）
+- Minor Reversal（次要反转）
+- Failed Breakout（假突破）
+- Measured Move（等距运动）
+- Wedge/Triangle（楔形/三角形）
+- Double Top/Bottom（双顶/双底）
+- High/Low 1,2,3,4（高低点序列）
+
+三、Bar-by-Bar分析要点
+- Signal Bar质量评估
+- Entry Bar确认
+- Follow Through评估
+- 趋势棒vs区间棒识别
+
+四、交易计划制定原则
+根据识别的市场周期，采用相应策略：
+- Always In: 只做趋势方向，回调入场
+- Channel: 通道边界交易，注意假突破
+- Trading Range: 区间顶底交易，中间区域不交易
+- Breakout: 评估突破强度，决定追入还是等回调
+
+输出格式要求：
+1. 先明确当前市场周期及判断依据
+2. 基于周期特征制定具体交易策略
+3. 标注关键价格水平和结构
+4. 给出明确的交易设置和管理方案
+"""
 
 
 def load_recent_rows(csv_path: Path, n: int) -> pd.DataFrame:
@@ -63,19 +127,48 @@ def make_prompt_merged(symbol: str, tf_to_df: dict[str, pd.DataFrame]) -> str:
     for tf, df in tf_to_df.items():
         sections.append(f"[周期 {tf}]\n" + _summarize_df(df))
     joined = "\n\n".join(sections)
+    time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     return (
     f"""
-我是一名"Albrooks 价格行为学"的交易者，先读取Context，再根据M5寻找交易计划。  
-以下是 {symbol} M5的k线数据。  
-- 请分析当前的Context
-- 制定采取的交易计划，具体可执行
+请使用Al Brooks价格行为学方法分析以下[{symbol}]的数据：
 
-注：
-1. 最新的K线仍在进行中，包括这次和后续的数据
-2. 如有多个交易计划，请给出优先级。
-
-数据如下：
 {joined}
+
+分析要求：
+
+第一部分：市场周期诊断
+1. 当前市场处于什么周期？（Breakout/Always In/Channel/Trading Range等）
+2. 判断依据是什么？（具体指出关键的价格行为特征）
+3. 这个周期已经持续了多久？是否有转换迹象？
+
+第二部分：关键结构识别
+1. 标注最重要的3-5个支撑/阻力位
+2. 识别最近的Swing High/Low
+3. 是否存在明显的趋势线或通道线？
+4. 有无重要的价格行为模式？（如wedge, triangle, measured move等）
+
+第三部分：当前局势评估
+1. 最近20根K线的价格行为总结
+2. 当前是否有"Always In"方向？
+3. 买方和卖方的相对强弱
+4. 是否处于"Breakout Mode"（即将突破）？
+
+第四部分：交易计划
+基于识别的市场周期，提供：
+1. 适合当前周期的交易策略
+2. 具体入场设置（包括Signal Bar特征）
+3. 止损位置（基于市场结构）
+4. 第一目标和第二目标
+5. 交易管理（何时移动止损、部分止盈）
+
+第五部分：风险提示
+1. 当前设置的概率评估（高概率60%+，中等40-60%，低概率<40%）
+2. 可能导致交易失败的情形
+3. 备选方案（如果当前设置失效）
+
+补充信息：
+- 当前时间：[{time}]
+- 风险管理：单笔风险不超过2%
     """
     )
 
@@ -165,7 +258,7 @@ def main() -> None:
         prompt = make_prompt_merged(symbol, tf_to_df)
         logger.info("构建提示完成 | symbol=%s | 提示字符数=%d", symbol, len(prompt))
         messages = [
-            {"role": "system", "content": "你是专业的量化交易顾问，严格按照Al Brooks价格行为学的逻辑进行交易。"},
+            {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
         content = client.chat(messages)

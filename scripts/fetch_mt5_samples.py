@@ -14,7 +14,7 @@ def main() -> None:
     logger = logging.getLogger("fetch_mt5_samples")
 
     symbols = ["XAUUSDm", "BTCUSDm", "ETHUSDm"]
-    timeframe_to_count = {"D1": 100, "H1": 100, "M5": 300}
+    timeframe_to_count = {"D1": 100, "H1": 300, "M5": 300}
     timeframes = ["D1", "H1", "M5"]
 
     project_root = Path(__file__).resolve().parent.parent
